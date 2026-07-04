@@ -118,14 +118,75 @@ async function callGemini(
   return text || "(empty response)";
 }
 
-export async function runAi(
-  provider: Provider,
+async function callOpenAICompatible(
+  baseUrl: string,
   apiKey: string,
   model: string,
-  language: string,
-  turns: AiTurn[]
+  system: string,
+  turns: AiTurn[],
+  sendImages: boolean
 ): Promise<string> {
+  const messages: any[] = [{ role: "system", content: system }];
+  for (const t of turns) {
+    if (t.imageDataUrl && sendImages) {
+      messages.push({
+        role: t.role,
+        content: [
+          { type: "text", text: t.text || "(see image)" },
+          { type: "image_url", image_url: { url: t.imageDataUrl } },
+        ],
+      });
+    } else {
+      messages.push({ role: t.role, content: t.text || "(see image)" });
+    }
+  }
+
+  const url = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        // Many local servers ignore auth, but some (vLLM, LM Studio) want a token.
+        authorization: `Bearer ${apiKey || "local"}`,
+      },
+      body: JSON.stringify({ model, messages, max_tokens: 4096, stream: false }),
+    });
+  } catch (e: any) {
+    throw new Error(
+      `Could not reach local server at ${url}. Is it running? (${e?.message || e})`
+    );
+  }
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = (data as any)?.error?.message || (data as any)?.error || JSON.stringify(data);
+    throw new Error(`Local LLM error (${res.status}): ${msg}`);
+  }
+  const text = (data as any)?.choices?.[0]?.message?.content;
+  return (typeof text === "string" ? text.trim() : "") || "(empty response)";
+}
+
+export async function runAi(opts: {
+  provider: Provider;
+  apiKey: string;
+  model: string;
+  language: string;
+  turns: AiTurn[];
+  baseUrl?: string;
+  sendImages?: boolean;
+}): Promise<string> {
+  const { provider, apiKey, model, language, turns } = opts;
   const system = systemPrompt(language);
   if (provider === "claude") return callClaude(apiKey, model, system, turns);
-  return callGemini(apiKey, model, system, turns);
+  if (provider === "gemini") return callGemini(apiKey, model, system, turns);
+  return callOpenAICompatible(
+    opts.baseUrl || "http://localhost:11434/v1",
+    apiKey,
+    model,
+    system,
+    turns,
+    opts.sendImages !== false
+  );
 }

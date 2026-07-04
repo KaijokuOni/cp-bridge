@@ -52,6 +52,7 @@ export default function RoomPage() {
   const [text, setText] = useState("");
   const [image, setImage] = useState<{ dataUrl: string; name: string } | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
+  const [ocr, setOcr] = useState<{ running: boolean; pct: number }>({ running: false, pct: 0 });
   const [error, setError] = useState("");
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -129,6 +130,42 @@ export default function RoomPage() {
     setImage({ dataUrl, name: file.name });
   }
 
+  // On-device OCR (Tesseract.js, runs entirely in this browser — image never uploaded).
+  async function runOcr(dataUrl: string): Promise<string> {
+    setOcr({ running: true, pct: 0 });
+    try {
+      const { createWorker } = await import("tesseract.js");
+      const worker = await createWorker("eng", 1, {
+        logger: (m: any) => {
+          if (m.status === "recognizing text") {
+            setOcr({ running: true, pct: Math.round((m.progress || 0) * 100) });
+          }
+        },
+      });
+      const { data } = await worker.recognize(dataUrl);
+      await worker.terminate();
+      return (data.text || "").trim();
+    } finally {
+      setOcr({ running: false, pct: 0 });
+    }
+  }
+
+  // Manual "Extract text" button: OCR the attached image into the composer for review.
+  async function onExtractText() {
+    if (!image) return;
+    setError("");
+    try {
+      const extracted = await runOcr(image.dataUrl);
+      if (!extracted) {
+        setError("OCR found no readable text in that image.");
+        return;
+      }
+      setText((t) => (t ? t + "\n\n" : "") + extracted);
+    } catch (e: any) {
+      setError(`OCR failed: ${e?.message || e}`);
+    }
+  }
+
   async function onSend() {
     setError("");
     const body = text.trim();
@@ -143,7 +180,13 @@ export default function RoomPage() {
     }
 
     // AI mode -----------------------------------------------------------
-    if (!settings.apiKey) {
+    if (settings.provider === "local") {
+      if (!settings.baseUrl) {
+        setShowSettings(true);
+        setError("Set your local server URL first (gear icon).");
+        return;
+      }
+    } else if (!settings.apiKey) {
       setShowSettings(true);
       setError("Add your API key first (gear icon).");
       return;
@@ -156,11 +199,32 @@ export default function RoomPage() {
       imageUrl: image?.dataUrl,
     });
 
+    // Decide whether to send the raw image or OCR it to text first.
+    // Cloud providers and vision-capable local models take the image directly;
+    // text-only local models get on-device OCR text instead.
+    const canSeeImages = settings.provider !== "local" || settings.visionCapable;
+    let promptText = body;
+    let imageForAi = image?.dataUrl;
+
+    if (image && !canSeeImages) {
+      try {
+        const extracted = await runOcr(image.dataUrl);
+        promptText =
+          (body ? body + "\n\n" : "") +
+          "Problem statement (extracted from image via OCR):\n" +
+          extracted;
+        imageForAi = undefined; // text-only model — don't send the image
+      } catch (e: any) {
+        setError(`OCR failed: ${e?.message || e}`);
+        return;
+      }
+    }
+
     const turns = [
       {
         role: "user" as const,
-        text: body || "Solve this competitive-programming problem.",
-        imageDataUrl: image?.dataUrl,
+        text: promptText || "Solve this competitive-programming problem.",
+        imageDataUrl: imageForAi,
       },
     ];
 
@@ -177,6 +241,8 @@ export default function RoomPage() {
           apiKey: settings.apiKey,
           model: settings.model,
           language: settings.language,
+          baseUrl: settings.baseUrl,
+          sendImages: settings.provider !== "local" || settings.visionCapable,
           turns,
         }),
       });
@@ -253,6 +319,13 @@ export default function RoomPage() {
             <MessageBubble key={m.id} m={m} mine={m.author.id === me?.id} />
           ))}
 
+          {ocr.running && (
+            <div className="flex items-center gap-2 text-gray-400 text-sm">
+              <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+              Reading image on-device (OCR {ocr.pct}%)…
+            </div>
+          )}
+
           {aiBusy && (
             <div className="flex items-center gap-2 text-gray-400 text-sm">
               <span className="h-2 w-2 rounded-full bg-sky-400 animate-pulse" />
@@ -293,7 +366,15 @@ export default function RoomPage() {
             <div className="mb-2 flex items-center gap-2 text-sm">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={image.dataUrl} alt="" className="h-12 w-12 rounded object-cover border border-edge" />
-              <span className="text-gray-400 truncate">{image.name}</span>
+              <span className="text-gray-400 truncate max-w-[8rem]">{image.name}</span>
+              <button
+                onClick={onExtractText}
+                disabled={ocr.running}
+                className="rounded border border-edge px-2 py-1 text-xs text-sky-300 hover:bg-white/5 disabled:opacity-50"
+                title="Run on-device OCR and put the text in the box"
+              >
+                {ocr.running ? `OCR ${ocr.pct}%` : "🔎 Extract text"}
+              </button>
               <button onClick={() => setImage(null)} className="text-gray-500 hover:text-red-400">
                 remove
               </button>

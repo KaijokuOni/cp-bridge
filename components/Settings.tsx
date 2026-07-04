@@ -6,10 +6,20 @@ import type { AiSettings, Provider } from "@/lib/types";
 const DEFAULT_MODEL: Record<Provider, string> = {
   claude: "claude-3-5-sonnet-latest",
   gemini: "gemini-2.0-flash",
+  local: "qwen2.5-coder:7b",
 };
 
+const DEFAULT_BASE_URL = "http://localhost:11434/v1";
+
 export function defaultSettings(): AiSettings {
-  return { provider: "claude", apiKey: "", model: DEFAULT_MODEL.claude, language: "C++" };
+  return {
+    provider: "claude",
+    apiKey: "",
+    model: DEFAULT_MODEL.claude,
+    language: "C++",
+    baseUrl: DEFAULT_BASE_URL,
+    visionCapable: false,
+  };
 }
 
 export default function Settings({
@@ -23,15 +33,15 @@ export default function Settings({
 }) {
   const [draft, setDraft] = useState<AiSettings>(value);
 
+  const isDefaultModel = (m: string) =>
+    m === DEFAULT_MODEL.claude || m === DEFAULT_MODEL.gemini || m === DEFAULT_MODEL.local;
+
   function setProvider(provider: Provider) {
     setDraft((d) => ({
       ...d,
       provider,
       // Reset to that provider's default model unless the user typed a custom one.
-      model:
-        d.model === DEFAULT_MODEL.claude || d.model === DEFAULT_MODEL.gemini
-          ? DEFAULT_MODEL[provider]
-          : d.model,
+      model: isDefaultModel(d.model) ? DEFAULT_MODEL[provider] : d.model,
     }));
   }
 
@@ -51,31 +61,58 @@ export default function Settings({
         </div>
 
         <label className="block text-sm text-gray-400 mb-1.5">Provider</label>
-        <div className="grid grid-cols-2 gap-2 mb-4">
-          {(["claude", "gemini"] as Provider[]).map((p) => (
+        <div className="grid grid-cols-3 gap-2 mb-4">
+          {(["claude", "gemini", "local"] as Provider[]).map((p) => (
             <button
               key={p}
               onClick={() => setProvider(p)}
-              className={`rounded-lg border px-3 py-2 text-sm capitalize transition-colors ${
+              className={`rounded-lg border px-2 py-2 text-xs sm:text-sm transition-colors ${
                 draft.provider === p
                   ? "border-sky-500 bg-sky-500/10 text-sky-300"
                   : "border-edge hover:bg-white/5"
               }`}
             >
-              {p === "claude" ? "Claude (Anthropic)" : "Gemini (Google)"}
+              {p === "claude" ? "Claude" : p === "gemini" ? "Gemini" : "Local LLM"}
             </button>
           ))}
         </div>
 
+        {draft.provider === "local" && (
+          <>
+            <label className="block text-sm text-gray-400 mb-1.5">Local server URL</label>
+            <input
+              value={draft.baseUrl}
+              onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })}
+              placeholder={DEFAULT_BASE_URL}
+              className="w-full rounded-lg bg-ink border border-edge px-3 py-2.5 outline-none focus:border-sky-500 font-mono text-sm mb-1"
+            />
+            <p className="text-xs text-gray-600 mb-4">
+              OpenAI-compatible endpoint. Ollama:{" "}
+              <code className="text-gray-400">http://localhost:11434/v1</code> · LM Studio:{" "}
+              <code className="text-gray-400">http://localhost:1234/v1</code>
+            </p>
+          </>
+        )}
+
         <label className="block text-sm text-gray-400 mb-1.5">
           API key
-          <span className="text-gray-600"> — stored in this browser only</span>
+          {draft.provider === "local" ? (
+            <span className="text-gray-600"> — usually not needed for local</span>
+          ) : (
+            <span className="text-gray-600"> — stored in this browser only</span>
+          )}
         </label>
         <input
           type="password"
           value={draft.apiKey}
           onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
-          placeholder={draft.provider === "claude" ? "sk-ant-..." : "AIza..."}
+          placeholder={
+            draft.provider === "claude"
+              ? "sk-ant-..."
+              : draft.provider === "gemini"
+                ? "AIza..."
+                : "(leave blank for Ollama)"
+          }
           className="w-full rounded-lg bg-ink border border-edge px-3 py-2.5 outline-none focus:border-sky-500 font-mono text-sm mb-4"
         />
 
@@ -87,9 +124,29 @@ export default function Settings({
         />
         <p className="text-xs text-gray-600 mb-4">
           Default:{" "}
-          <code className="text-gray-400">{DEFAULT_MODEL[draft.provider]}</code>. Change it to any
-          model your key can access.
+          <code className="text-gray-400">{DEFAULT_MODEL[draft.provider]}</code>.{" "}
+          {draft.provider === "local"
+            ? "Any model your server has pulled (e.g. llama3.2-vision, llava, qwen2.5-coder)."
+            : "Change it to any model your key can access."}
         </p>
+
+        {draft.provider === "local" && (
+          <label className="flex items-start gap-2 mb-4 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={draft.visionCapable}
+              onChange={(e) => setDraft({ ...draft, visionCapable: e.target.checked })}
+              className="mt-0.5 accent-sky-500"
+            />
+            <span className="text-sm text-gray-300">
+              This model can read images
+              <span className="block text-xs text-gray-600">
+                On for vision models (llava, llama3.2-vision). Off for text-only coder models —
+                screenshots are auto-converted to text with on-device OCR before sending.
+              </span>
+            </span>
+          </label>
+        )}
 
         <label className="block text-sm text-gray-400 mb-1.5">Solution language</label>
         <select
