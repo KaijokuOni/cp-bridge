@@ -82,7 +82,16 @@ the browser. Both PCs just open the deployed URL and join the same room.
    ```
    (LM Studio, llama.cpp `--server`, and vLLM also work — anything exposing an
    OpenAI-compatible `/v1/chat/completions` endpoint.)
-2. Run CP Bridge locally (`npm run dev`) so the server can reach your LLM.
+2. Start Ollama so your browser is allowed to call it. The local provider talks
+   to Ollama **directly from your browser**, so it works on the hosted
+   `cp-bridge.vercel.app` too — you just have to let Ollama accept the request:
+   ```bash
+   # macOS: allow any origin (simplest), then restart Ollama
+   launchctl setenv OLLAMA_ORIGINS "*"
+   # or run it inline:
+   OLLAMA_ORIGINS="*" ollama serve
+   ```
+   (LM Studio: enable "CORS" / "Serve on Local Network" in its server settings.)
 3. In **⚙ Settings**, pick **Local LLM**, set the base URL
    (`http://localhost:11434/v1` for Ollama, `http://localhost:1234/v1` for LM
    Studio), and enter the model name. Leave the API key blank.

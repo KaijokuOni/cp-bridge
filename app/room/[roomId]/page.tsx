@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import type { AiSettings, ChatMessage } from "@/lib/types";
+import { systemPrompt } from "@/lib/ai";
 import Markdown from "@/components/Markdown";
 import Settings, { defaultSettings } from "@/components/Settings";
 
@@ -150,6 +151,54 @@ export default function RoomPage() {
     }
   }
 
+  // Call a local OpenAI-compatible server DIRECTLY from the browser.
+  // This is what makes "Local LLM" work even on the hosted cp-bridge.vercel.app:
+  // the request goes browser -> your own machine (localhost), never through the
+  // cloud server (which can't see your localhost).
+  async function callLocalDirect(promptText: string, imageDataUrl?: string): Promise<string> {
+    const sys = systemPrompt(settings.language);
+    const userContent =
+      imageDataUrl && settings.visionCapable
+        ? [
+            { type: "text", text: promptText || "(see image)" },
+            { type: "image_url", image_url: { url: imageDataUrl } },
+          ]
+        : promptText || "(see image)";
+
+    const url = settings.baseUrl.replace(/\/+$/, "") + "/chat/completions";
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(settings.apiKey ? { authorization: `Bearer ${settings.apiKey}` } : {}),
+        },
+        body: JSON.stringify({
+          model: settings.model,
+          messages: [
+            { role: "system", content: sys },
+            { role: "user", content: userContent },
+          ],
+          max_tokens: 4096,
+          stream: false,
+        }),
+      });
+    } catch (e: any) {
+      throw new Error(
+        `Could not reach your local server at ${url} from this browser. ` +
+          `Make sure it's running, and (for Ollama) start it with ` +
+          `OLLAMA_ORIGINS='*' so it accepts requests from this page. (${e?.message || e})`
+      );
+    }
+    const data = await res.json().catch(() => ({} as any));
+    if (!res.ok) {
+      const msg = data?.error?.message || data?.error || JSON.stringify(data);
+      throw new Error(`Local LLM error (${res.status}): ${msg}`);
+    }
+    return (data?.choices?.[0]?.message?.content || "").trim() || "(empty response)";
+  }
+
   // Manual "Extract text" button: OCR the attached image into the composer for review.
   async function onExtractText() {
     if (!image) return;
@@ -233,22 +282,28 @@ export default function RoomPage() {
     setImage(null);
     setAiBusy(true);
     try {
-      const r = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          provider: settings.provider,
-          apiKey: settings.apiKey,
-          model: settings.model,
-          language: settings.language,
-          baseUrl: settings.baseUrl,
-          sendImages: settings.provider !== "local" || settings.visionCapable,
-          turns,
-        }),
-      });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error || "AI request failed");
-      await postToRoom({ kind: "ai", text: d.text });
+      let answer: string;
+      if (settings.provider === "local") {
+        // Browser -> your machine directly, so it works even on the hosted site.
+        answer = await callLocalDirect(promptText, imageForAi);
+      } else {
+        // Cloud providers go through the server route (keeps keys/CORS server-side).
+        const r = await fetch("/api/ai", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            provider: settings.provider,
+            apiKey: settings.apiKey,
+            model: settings.model,
+            language: settings.language,
+            turns,
+          }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || "AI request failed");
+        answer = d.text;
+      }
+      await postToRoom({ kind: "ai", text: answer });
     } catch (e: any) {
       setError(e?.message || "AI request failed");
       // Surface the failure in the room too, so the other PC isn't left waiting.
