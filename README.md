@@ -9,8 +9,13 @@ with everyone in the room.
 - 🤖 **AI problem solver** — paste a statement or drop a screenshot; get approach,
   complexity, and ready-to-submit code (C++/Python/Java/…).
 - 🖼️ **Vision** — solves directly from a photo/screenshot of the problem.
-- 🔑 **Your key, your control** — the API key lives in your browser's localStorage
-  and is sent only to your chosen provider.
+- 🏠 **Local LLM** — point it at Ollama / LM Studio / llama.cpp / vLLM and run
+  fully offline; no cloud, no key.
+- 🔎 **On-device OCR** — Tesseract.js turns a screenshot into text right in your
+  browser (the image never leaves the machine), so even text-only local coder
+  models can solve problems from images.
+- 🔑 **Your key, your control** — cloud API keys live in your browser's
+  localStorage and are sent only to your chosen provider.
 
 ---
 
@@ -67,6 +72,30 @@ the browser. Both PCs just open the deployed URL and join the same room.
 > **localhost + tunnel** path above is the most reliable.
 
 ---
+
+## Using a local LLM (offline, no key)
+
+1. Install [Ollama](https://ollama.com) and pull a model:
+   ```bash
+   ollama pull qwen2.5-coder:7b     # great at competitive programming (text)
+   ollama pull llama3.2-vision      # can read screenshots directly (vision)
+   ```
+   (LM Studio, llama.cpp `--server`, and vLLM also work — anything exposing an
+   OpenAI-compatible `/v1/chat/completions` endpoint.)
+2. Run CP Bridge locally (`npm run dev`) so the server can reach your LLM.
+3. In **⚙ Settings**, pick **Local LLM**, set the base URL
+   (`http://localhost:11434/v1` for Ollama, `http://localhost:1234/v1` for LM
+   Studio), and enter the model name. Leave the API key blank.
+4. If your model has vision (llava, llama3.2-vision), tick **"This model can read
+   images"**. For text-only coder models, leave it off — screenshots are
+   auto-converted to text with on-device OCR before sending.
+
+## OCR (image → text on-device)
+
+Attach a screenshot and click **🔎 Extract text** to OCR it into the message box
+(review/edit before sending). It also runs automatically when you send an image
+to a text-only local model. OCR is powered by Tesseract.js and runs entirely in
+your browser — the image is never uploaded anywhere.
 
 ## Getting API keys
 
